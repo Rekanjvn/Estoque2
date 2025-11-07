@@ -236,7 +236,6 @@
                 return () => {
                     unsubInventory();
                     unsubChat();
-                    unsubMovements();
                 };
             }, [db, userId, isAuthReady]);
             
@@ -557,7 +556,7 @@
                                 value={name} 
                                 onChange={(e) => setName(e.target.value)} 
                                 required 
-                                isDark={true}
+                                isDark={true} // Propriedade para tema escuro
                             />
                             <div className="pt-2">
                                 <button 
