@@ -3,551 +3,1033 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestão de Estoque Acrílico - Netlify Ready</title>
-    <!-- Tailwind CSS CDN -->
+    <title>Sistema de Gestão de Estoque de Acrílico</title>
+    <!-- Carregamento do Tailwind CSS para estilização responsiva -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- React & ReactDOM CDN -->
+    <style>
+        /* Define a fonte Inter como padrão */
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+    <!-- Carregamento das Bibliotecas Essenciais -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-    <!-- Babel CDN (para transpilar JSX) -->
+    <!-- Carregamento do Babel Standalone para transpilar JSX no navegador -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase CDNs (Módulos ESM) -->
+    <!-- Carregamento das Bibliotecas Firebase via CDN -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, query, orderBy, onSnapshot, doc, setDoc, addDoc, updateDoc, serverTimestamp, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
-        // Define as funções do Firebase no objeto global 'window' para serem acessíveis pelo script Babel/React
-        window.firebase = {
+        // Expondo funções Firebase para o escopo global (usado no script type="text/babel")
+        window.firebaseDependencies = {
             initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
-            getFirestore, collection, query, orderBy, onSnapshot, doc, setDoc, addDoc, updateDoc, serverTimestamp, limit
+            getFirestore, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, where, getDocs, serverTimestamp,
         };
-        
-        // Inicializa o app e a autenticação imediatamente após a importação
-        window.initFirebaseApp = async () => {
-            const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-            const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-            const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+    </script>
+</head>
+<body>
+    <div id="root">
+        <!-- O conteúdo da aplicação React será renderizado aqui -->
+        <div class="p-8 text-center text-gray-500">Carregando Sistema...</div>
+    </div>
 
-            if (Object.keys(firebaseConfig).length > 0) {
+    <!-- O código React/JSX/Firebase da aplicação -->
+    <script type="text/babel">
+        // Importa as dependências do Firebase expostas no escopo global
+        const {
+            initializeApp, getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged,
+            getFirestore, doc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, orderBy, where, getDocs, serverTimestamp,
+        } = window.firebaseDependencies;
+
+        const { useState, useEffect, useCallback, useMemo, useRef } = React;
+
+        // Variáveis globais do ambiente (Canvas)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'acrylic-inventory-manager';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Helper para converter data para formato PT-BR
+        const formatTimestamp = (timestamp) => {
+            if (!timestamp || !timestamp.seconds) return 'N/A';
+            const date = new Date(timestamp.seconds * 1000);
+            return date.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+        };
+
+        // --- Componente Principal ---
+        const App = () => {
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [userId, setUserId] = useState(null);
+            const [isAdmin, setIsAdmin] = useState(false); // Simplificação de Papéis: Admin pode editar
+            const [isAuthReady, setIsAuthReady] = useState(false);
+            const [inventory, setInventory] = useState([]);
+            const [movements, setMovements] = useState([]);
+            const [chatMessages, setChatMessages] = useState([]);
+            const [view, setView] = useState('inventory'); // 'inventory', 'chat', 'reports', 'add_edit'
+            const [searchTerm, setSearchTerm] = useState('');
+            const [loading, setLoading] = useState(true);
+            const [error, setError] = useState(null);
+            const [selectedSheet, setSelectedSheet] = useState(null); // Para edição/movimentação
+
+            // 1. Inicialização do Firebase e Autenticação
+            useEffect(() => {
                 try {
                     const app = initializeApp(firebaseConfig);
-                    window.db = getFirestore(app);
-                    window.auth = getAuth(app);
-                    window.appId = appId;
+                    const firestore = getFirestore(app);
+                    const authService = getAuth(app);
                     
-                    // Configura o login inicial
-                    const auth = window.auth;
-                    const user = auth.currentUser;
+                    setDb(firestore);
+                    setAuth(authService);
 
-                    if (!user) {
-                        if (initialAuthToken) {
-                            await signInWithCustomToken(auth, initialAuthToken).catch(e => {
-                                console.error("Erro ao autenticar com token customizado, logando anonimamente.", e);
-                                signInAnonymously(auth);
-                            });
+                    // Listener de estado de autenticação
+                    const unsubscribe = onAuthStateChanged(authService, async (user) => {
+                        if (user) {
+                            setUserId(user.uid);
+                            // Lógica simplificada de Papéis: Usuário fixo para demonstração
+                            setIsAdmin(user.uid.includes('admin') || user.uid.length % 2 === 0);
                         } else {
-                            await signInAnonymously(auth);
+                            setUserId(null);
+                            setIsAdmin(false);
                         }
-                    }
-                    console.log("Firebase inicializado e autenticado.");
+                        setIsAuthReady(true);
+                        setLoading(false);
+                    });
 
+                    // Tentativa de login com token personalizado ou anônimo
+                    const login = async () => {
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(authService, initialAuthToken);
+                        } else {
+                            await signInAnonymously(authService);
+                        }
+                    };
+                    login();
+
+                    return () => unsubscribe();
                 } catch (e) {
                     console.error("Erro ao inicializar Firebase:", e);
+                    setError("Falha ao inicializar o sistema. Verifique a configuração.");
+                    setLoading(false);
                 }
-            } else {
-                console.error("Configuração do Firebase não encontrada. O sistema não salvará dados.");
-            }
-        };
-
-        // Chama a inicialização assim que o DOM estiver pronto
-        document.addEventListener('DOMContentLoaded', window.initFirebaseApp);
-    </script>
-    <style>
-        .font-sans { font-family: 'Inter', sans-serif; }
-        .tab-content { min-height: calc(100vh - 150px); }
-        @media (min-width: 768px) { .tab-content { min-height: calc(100vh - 48px); } }
-    </style>
-</head>
-<body class="bg-gray-100">
-
-    <div id="root"></div>
-
-    <script type="text/babel">
-        // Importa Hooks e Componentes Globais
-        const { useState, useEffect, useMemo, useRef } = React;
-        const { getAuth, signInAnonymously, onAuthStateChanged, getFirestore, collection, query, orderBy, onSnapshot, doc, setDoc, addDoc, updateDoc, serverTimestamp, limit } = window.firebase || {};
-        
-        // Variáveis globais para o contexto da plataforma
-        const appId = window.appId || 'default-app-id';
-        const db = window.db;
-        const auth = window.auth;
-
-        // Funções utilitárias (sem mudanças)
-        const toCSV = (data) => {
-            if (data.length === 0) return '';
-            const headers = Object.keys(data[0]).filter(key => key !== 'id' && key !== 'history');
-            const csvRows = [
-                headers.join(';'),
-                ...data.map(row => headers.map(header => {
-                    const value = row[header];
-                    if (value instanceof Date) return value.toISOString();
-                    if (typeof value === 'string' && (value.includes(';') || value.includes('"') || value.includes('\n'))) {
-                        return `"${value.replace(/"/g, '""')}"`;
-                    }
-                    return value;
-                }).join(';'))
-            ];
-            return csvRows.join('\n');
-        };
-
-        // Funções de Ícones (Inline SVG)
-        const PlusIcon = (props) => (
-            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></svg>
-        );
-        const SearchIcon = (props) => (
-            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        );
-        const DownloadIcon = (props) => (
-            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
-        );
-        const SendIcon = (props) => (
-            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
-        );
-        const UsersIcon = (props) => (
-            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-        );
-        const SettingsIcon = (props) => (
-            <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9v-.09A1.65 1.65 0 0 0 10.6 4a1.65 1.65 0 0 0 .33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1 1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1.82 1.82 1.65 1.65 0 0 0 .33-1.82l.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33 1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.82 1.82 1.65 1.65 0 0 0-.33 1.82l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 1.82-.33 1.65 1.65 0 0 0 1.51-1V19a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09z"/></svg>
-        );
-
-        const SectionTitle = ({ children }) => (
-            <h2 className="text-xl font-bold text-gray-800 mb-4 border-b pb-2 border-indigo-100">{children}</h2>
-        );
-
-        // Componente principal
-        const App = () => {
-            // --- 1. ESTADO DE AUTENTICAÇÃO E FIREBASE ---
-            const [userId, setUserId] = useState(null);
-            const [isAuthReady, setIsAuthReady] = useState(false);
-            const [error, setError] = useState('');
-            const [activeTab, setActiveTab] = useState('inventory'); 
-
-            // --- 2. ESTADO DE DADOS E PERFIL ---
-            const [sheets, setSheets] = useState([]);
-            const [chatMessages, setChatMessages] = useState([]);
-            const [movements, setMovements] = useState([]);
-            const [searchTerm, setSearchTerm] = useState('');
-            const [userProfile, setUserProfile] = useState(null); 
-
-            // --- 3. ESTADO DE FORMULÁRIOS / MODELAGEM ---
-            const [newSheet, setNewSheet] = useState({
-                type: '', thickness: '', size: '', location: '', initialQuantity: '',
-            });
-            const [chatInput, setChatInput] = useState('');
-            const [adjustment, setAdjustment] = useState({ id: null, type: '', quantity: 0, movementType: 'OUTPUT', notes: '' });
-            const [isUsernameModalOpen, setIsUsernameModalOpen] = useState(false);
-            const [tempUsername, setTempUsername] = useState('');
-            const chatRef = useRef(null);
-
-            // Nome de usuário (usa o perfil salvo, ou fallback para o ID)
-            const userName = useMemo(() => userProfile?.name || (userId ? `Usuário ${userId.substring(0, 4)}` : 'Convidado'), [userProfile, userId]);
-
-            // Função de rolagem para o final do chat
-            useEffect(() => {
-                if (chatRef.current) {
-                    chatRef.current.scrollTop = chatRef.current.scrollHeight;
-                }
-            }, [chatMessages]);
-
-            // Configuração da Autenticação (Roda uma vez)
-            useEffect(() => {
-                if (!auth) return; 
-
-                const unsubscribe = onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        setUserId(user.uid);
-                    } else {
-                         // Se o login falhar, o userId permanece nulo ou 'Convidado'
-                    }
-                    setIsAuthReady(true);
-                });
-                return () => unsubscribe();
             }, []);
 
-            // Escutas de Dados (onSnapshot)
+            // 2. Listeners de Dados em Tempo Real (Inventory e Chat)
             useEffect(() => {
-                if (!db || !isAuthReady) return;
+                if (!db || !userId || !isAuthReady) return;
 
-                const baseCollectionPath = `/artifacts/${appId}/public/data`;
-                const sheetsColRef = collection(db, `${baseCollectionPath}/acrylic_sheets`);
-                const chatColRef = collection(db, `${baseCollectionPath}/material_chat`);
-                const movementsColRef = collection(db, `${baseCollectionPath}/sheet_movements`);
+                // Caminho da Coleção Pública de Estoque
+                const inventoryPath = `artifacts/${appId}/public/data/inventory`;
+                const chatPath = `artifacts/${appId}/public/data/chat`;
+                const movementsPath = `artifacts/${appId}/public/data/movements`;
 
-                let unsubscribeProfile = () => {};
+                // Listener de Estoque (Inventory)
+                const unsubInventory = onSnapshot(collection(db, inventoryPath), (snapshot) => {
+                    const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setInventory(items);
+                }, (err) => console.error("Erro ao obter estoque:", err));
 
-                // Escuta para o Inventário de Chapas
-                const unsubscribeSheets = onSnapshot(sheetsColRef, (snapshot) => {
-                    const sheetList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setSheets(sheetList);
-                }, (err) => console.error("Erro ao buscar chapas:", err));
-
-                // Escuta para o Chat
-                const chatQuery = query(chatColRef, orderBy('timestamp', 'asc'), limit(50));
-                const unsubscribeChat = onSnapshot(chatQuery, (snapshot) => {
+                // Listener de Chat
+                const qChat = query(collection(db, chatPath), orderBy('timestamp', 'asc'));
+                const unsubChat = onSnapshot(qChat, (snapshot) => {
                     const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                     setChatMessages(messages);
-                }, (err) => console.error("Erro ao buscar chat:", err));
-
-                // Escuta para os Movimentos
-                const movementsQuery = query(movementsColRef, orderBy('timestamp', 'desc'));
-                const unsubscribeMovements = onSnapshot(movementsQuery, (snapshot) => {
-                    const movementList = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    setMovements(movementList);
-                }, (err) => console.error("Erro ao buscar movimentos:", err));
-
-                // Escuta para o Perfil do Usuário (Private)
-                if (userId) {
-                    const userProfileDocRef = doc(db, `/artifacts/${appId}/users/${userId}/profile/config`);
-                    unsubscribeProfile = onSnapshot(userProfileDocRef, (docSnap) => {
-                        if (docSnap.exists()) {
-                            const profileData = docSnap.data();
-                            setUserProfile(profileData);
-                            setTempUsername(profileData.name || '');
-                        } else {
-                            setUserProfile({ name: null });
-                        }
-                    }, (err) => console.error("Erro ao buscar perfil do usuário:", err));
-                }
+                }, (err) => console.error("Erro ao obter mensagens:", err));
+                
+                // Listener de Movimentações (Para relatórios mais rápidos)
+                const qMovements = query(collection(db, movementsPath), orderBy('timestamp', 'desc'));
+                const unsubMovements = onSnapshot(qMovements, (snapshot) => {
+                    const movs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    setMovements(movs);
+                }, (err) => console.error("Erro ao obter movimentos:", err));
 
                 return () => {
-                    unsubscribeSheets();
-                    unsubscribeChat();
-                    unsubscribeMovements();
-                    unsubscribeProfile();
+                    unsubInventory();
+                    unsubChat();
+                    unsubMovements();
                 };
-            }, [db, isAuthReady, userId]); 
+            }, [db, userId, isAuthReady]);
 
+            // --- Lógica de CRUD e Movimentação ---
 
-            // --- 4. LÓGICA DE NEGÓCIO (CRUD) ---
-
-            // Função para salvar o nome de usuário escolhido
-            const handleSaveUsername = async () => {
-                if (!db || !userId || !tempUsername.trim()) {
-                    alert('O nome de usuário não pode estar vazio.');
-                    return;
-                }
-
-                const trimmedName = tempUsername.trim();
-                const userProfileDocRef = doc(db, `/artifacts/${appId}/users/${userId}/profile/config`);
-
+            // Adicionar/Atualizar Chapa
+            const handleSaveSheet = useCallback(async (sheetData) => {
+                if (!db || !userId) return setError("Usuário não autenticado.");
+                setLoading(true);
+                const inventoryPath = `artifacts/${appId}/public/data/inventory`;
+                const movementsPath = `artifacts/${appId}/public/data/movements`;
+                
+                const isNew = !sheetData.id;
+                const initialQuantity = isNew ? sheetData.quantity : 0;
+                
                 try {
-                    await setDoc(userProfileDocRef, { name: trimmedName }, { merge: true });
-                    setIsUsernameModalOpen(false);
-                } catch (e) {
-                    console.error("Erro ao salvar nome de usuário:", e);
-                    alert("Erro ao salvar nome de usuário. Verifique o console.");
-                }
-            };
+                    const dataToSave = {
+                        material: sheetData.material,
+                        thickness: parseFloat(sheetData.thickness),
+                        size_w: parseFloat(sheetData.size_w),
+                        size_h: parseFloat(sheetData.size_h),
+                        min_stock: parseFloat(sheetData.min_stock || 0),
+                        last_update: serverTimestamp(),
+                    };
 
+                    let sheetId;
 
-            // Adicionar Nova Chapa / Adicionar a Existente
-            const handleAddOrUpdateSheet = async (e) => {
-                e.preventDefault();
-                if (!db || !userId) return;
-
-                const { type, thickness, size, location, initialQuantity } = newSheet;
-                const quantity = parseInt(initialQuantity);
-                const thicknessNum = parseFloat(thickness);
-
-                if (!type || !thicknessNum || !size || !location || quantity <= 0) {
-                    alert('Preencha todos os campos corretamente e defina uma quantidade inicial positiva.');
-                    return;
-                }
-
-                const sheetsColRef = collection(db, `/artifacts/${appId}/public/data/acrylic_sheets`);
-                const movementsColRef = collection(db, `/artifacts/${appId}/public/data/sheet_movements`);
-
-                const existingSheet = sheets.find(s => s.type === type && s.thickness === thicknessNum && s.size === size);
-
-                try {
-                    if (existingSheet) {
-                        const sheetDocRef = doc(db, sheetsColRef.path, existingSheet.id);
-                        await updateDoc(sheetDocRef, {
-                            quantity: existingSheet.quantity + quantity,
-                            lastIn: serverTimestamp(),
+                    if (isNew) {
+                        // Adicionar nova chapa
+                        const docRef = await addDoc(collection(db, inventoryPath), {
+                            ...dataToSave,
+                            quantity: initialQuantity,
                         });
-                        
-                        await addDoc(movementsColRef, {
-                            sheetId: existingSheet.id,
-                            type: 'INPUT',
-                            quantity: quantity,
-                            timestamp: serverTimestamp(),
-                            userId: userId,
-                            userName: userName,
-                            sheetInfo: { type, thickness: thicknessNum, size },
-                        });
+                        sheetId = docRef.id;
+
+                        // Registrar entrada inicial
+                        if (initialQuantity > 0) {
+                             await addDoc(collection(db, movementsPath), {
+                                sheet_id: sheetId,
+                                type: 'entrada',
+                                quantity: initialQuantity,
+                                timestamp: serverTimestamp(),
+                                user_id: userId,
+                                username: `User-${userId.substring(0, 4)}`,
+                            });
+                        }
 
                     } else {
-                        await addDoc(sheetsColRef, {
-                            type,
-                            thickness: thicknessNum,
-                            size,
-                            location,
-                            quantity,
-                            lastIn: serverTimestamp(),
-                            createdAt: serverTimestamp(),
-                        });
-
+                        // Atualizar dados da chapa existente
+                        const docRef = doc(db, inventoryPath, sheetData.id);
+                        await updateDoc(docRef, dataToSave);
+                        sheetId = sheetData.id;
                     }
-                    setNewSheet({ type: '', thickness: '', size: '', location: '', initialQuantity: '' });
+
+                    setView('inventory');
+                    setSelectedSheet(null);
+
                 } catch (e) {
-                    console.error("Erro ao adicionar/atualizar chapa:", e);
-                    alert("Erro ao salvar dados. Verifique o console.");
+                    console.error("Erro ao salvar chapa:", e);
+                    setError(`Erro ao salvar chapa: ${e.message}`);
+                } finally {
+                    setLoading(false);
                 }
-            };
+            }, [db, userId]);
 
-            // Ajuste de Estoque (Saída/Entrada)
-            const handleAdjustment = async () => {
-                if (!db || !userId || !adjustment.id || adjustment.quantity <= 0) return;
+            // Registrar Movimentação (Entrada/Saída)
+            const handleMovement = useCallback(async (sheetId, type, quantity) => {
+                if (!db || !userId) return setError("Usuário não autenticado.");
+                if (quantity <= 0) return setError("A quantidade deve ser positiva.");
 
-                const sheetToAdjust = sheets.find(s => s.id === adjustment.id);
-                if (!sheetToAdjust) return;
+                setLoading(true);
+                const inventoryPath = `artifacts/${appId}/public/data/inventory`;
+                const movementsPath = `artifacts/${appId}/public/data/movements`;
 
-                const sheetsColRef = collection(db, `/artifacts/${appId}/public/data/acrylic_sheets`);
-                const movementsColRef = collection(db, `/artifacts/${appId}/public/data/sheet_movements`);
-                const sheetDocRef = doc(db, sheetsColRef.path, sheetToAdjust.id);
+                const sheetRef = doc(db, inventoryPath, sheetId);
+                const currentSheet = inventory.find(s => s.id === sheetId);
 
-                let newQuantity = sheetToAdjust.quantity;
-                let movementType = adjustment.movementType;
+                if (!currentSheet) {
+                    setLoading(false);
+                    return setError("Chapa não encontrada.");
+                }
 
-                if (movementType === 'OUTPUT') {
-                    if (sheetToAdjust.quantity < adjustment.quantity) {
-                        alert('A quantidade de saída é maior que o estoque atual.');
-                        return;
+                let newQuantity;
+                if (type === 'entrada') {
+                    newQuantity = currentSheet.quantity + quantity;
+                } else if (type === 'saida') {
+                    newQuantity = currentSheet.quantity - quantity;
+                    if (newQuantity < 0) {
+                        setLoading(false);
+                        return setError("Quantidade insuficiente em estoque para a saída.");
                     }
-                    newQuantity -= adjustment.quantity;
                 } else {
-                    newQuantity += adjustment.quantity;
+                    setLoading(false);
+                    return setError("Tipo de movimentação inválido.");
                 }
 
                 try {
-                    await updateDoc(sheetDocRef, {
+                    // 1. Atualizar o estoque
+                    await updateDoc(sheetRef, {
                         quantity: newQuantity,
-                        ...(movementType === 'OUTPUT' ? { lastOut: serverTimestamp() } : { lastIn: serverTimestamp() }),
+                        last_update: serverTimestamp()
                     });
 
-                    await addDoc(movementsColRef, {
-                        sheetId: sheetToAdjust.id,
-                        type: movementType,
-                        quantity: adjustment.quantity,
+                    // 2. Registrar a movimentação
+                    await addDoc(collection(db, movementsPath), {
+                        sheet_id: sheetId,
+                        type: type,
+                        quantity: quantity,
                         timestamp: serverTimestamp(),
-                        userId: userId,
-                        userName: userName,
-                        sheetInfo: { type: sheetToAdjust.type, thickness: sheetToAdjust.thickness, size: sheetToAdjust.size },
-                        notes: adjustment.notes,
+                        user_id: userId,
+                        username: `User-${userId.substring(0, 4)}`,
                     });
 
-                    setAdjustment({ id: null, type: '', quantity: 0, movementType: 'OUTPUT', notes: '' });
+                    // Limpar seleção e voltar ao inventário
+                    setView('inventory');
+                    setSelectedSheet(null);
                 } catch (e) {
-                    console.error("Erro ao ajustar estoque:", e);
-                    alert("Erro ao ajustar estoque. Verifique o console.");
+                    console.error("Erro ao registrar movimento:", e);
+                    setError(`Erro ao registrar movimento: ${e.message}`);
+                } finally {
+                    setLoading(false);
                 }
-            };
+            }, [db, userId, inventory]);
 
-            // Enviar Mensagem do Chat
-            const handleSendChat = async (e) => {
-                e.preventDefault();
-                if (!db || !userId || !chatInput.trim()) return;
+            // --- Lógica de Chat ---
 
-                const chatColRef = collection(db, `/artifacts/${appId}/public/data/material_chat`);
-
+            const handleSendMessage = useCallback(async (message) => {
+                if (!db || !userId || !message.trim()) return;
+                const chatPath = `artifacts/${appId}/public/data/chat`;
+                
                 try {
-                    await addDoc(chatColRef, {
-                        userId: userId,
-                        username: userName,
-                        message: chatInput,
+                    await addDoc(collection(db, chatPath), {
+                        user_id: userId,
+                        username: `User-${userId.substring(0, 4)}`,
+                        message: message.trim(),
                         timestamp: serverTimestamp(),
                     });
-                    setChatInput('');
                 } catch (e) {
                     console.error("Erro ao enviar mensagem:", e);
+                    setError("Erro ao enviar mensagem.");
+                }
+            }, [db, userId]);
+
+            // --- Lógica de CSV (Simplificada, Cliente-side) ---
+
+            // Exportar CSV
+            const exportCSV = () => {
+                if (inventory.length === 0) return;
+
+                const headers = ["ID", "Material", "Espessura (mm)", "Largura (mm)", "Altura (mm)", "Estoque", "Estoque Mínimo", "Ultima Atualização"].join(',');
+                
+                const rows = inventory.map(item => [
+                    item.id,
+                    item.material,
+                    item.thickness,
+                    item.size_w,
+                    item.size_h,
+                    item.quantity,
+                    item.min_stock,
+                    formatTimestamp(item.last_update)
+                ].map(String).map(s => `"${s.replace(/"/g, '""')}"`).join(',')); // Envolve e escapa
+
+                const csvContent = [headers, ...rows].join('\n');
+                
+                const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+                const link = document.createElement("a");
+                if (link.download !== undefined) {
+                    const url = URL.createObjectURL(blob);
+                    link.setAttribute("href", url);
+                    link.setAttribute("download", `estoque_acrilico_${new Date().toISOString().split('T')[0]}.csv`);
+                    link.style.visibility = 'hidden';
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
                 }
             };
 
-            // Lógica de Busca (Filtro)
-            const filteredSheets = useMemo(() => {
-                if (!searchTerm) return sheets;
-                const lowerCaseSearch = searchTerm.toLowerCase();
-                return sheets.filter(sheet =>
-                    sheet.type.toLowerCase().includes(lowerCaseSearch) ||
-                    sheet.size.toLowerCase().includes(lowerCaseSearch) ||
-                    sheet.location.toLowerCase().includes(lowerCaseSearch) ||
-                    String(sheet.thickness).includes(lowerCaseSearch)
+            // --- Filtros e Pesquisa ---
+
+            const filteredInventory = useMemo(() => {
+                if (!searchTerm) return inventory;
+                const term = searchTerm.toLowerCase();
+                return inventory.filter(sheet => 
+                    sheet.material.toLowerCase().includes(term) ||
+                    sheet.thickness.toString().includes(term) ||
+                    sheet.size_w.toString().includes(term) ||
+                    sheet.size_h.toString().includes(term)
                 );
-            }, [sheets, searchTerm]);
+            }, [inventory, searchTerm]);
 
-            // Lógica de Exportação CSV
-            const handleExportCSV = () => {
-                const dataToExport = sheets.map(s => ({
-                    ID: s.id,
-                    TIPO: s.type,
-                    ESPESSURA_MM: s.thickness,
-                    TAMANHO: s.size,
-                    LOCALIZACAO: s.location,
-                    QUANTIDADE: s.quantity,
-                    ULTIMA_ENTRADA: s.lastIn ? new Date(s.lastIn.seconds * 1000) : '',
-                }));
+            // --- Componentes Filhos (Renderização Condicional) ---
 
-                const csvString = toCSV(dataToExport);
-                const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-                const url = URL.createObjectURL(blob);
-                const link = document.createElement('a');
-                link.setAttribute('href', url);
-                link.setAttribute('download', `estoque_acrilico_${new Date().toISOString().slice(0, 10)}.csv`);
-                link.click();
-                URL.revokeObjectURL(url);
+            const renderView = () => {
+                if (loading) return <LoadingSpinner />;
+                if (error) return <ErrorMessage message={error} onDismiss={() => setError(null)} />;
+                if (!userId) return <div className="text-center p-8 text-red-500">Aguardando autenticação...</div>;
+
+                switch (view) {
+                    case 'inventory':
+                        return <InventoryList 
+                            inventory={filteredInventory}
+                            searchTerm={searchTerm}
+                            setSearchTerm={setSearchTerm}
+                            onAdd={() => { setSelectedSheet(null); setView('add_edit'); }}
+                            onEdit={(sheet) => { setSelectedSheet(sheet); setView('add_edit'); }}
+                            onMovement={(sheet) => { setSelectedSheet(sheet); setView('movement'); }}
+                            exportCSV={exportCSV}
+                            isAdmin={isAdmin}
+                            db={db}
+                            setError={setError} // Adicionado para exibir mensagens de erro/feedback
+                        />;
+                    case 'add_edit':
+                        return <AddEditSheet 
+                            sheet={selectedSheet} 
+                            onSave={handleSaveSheet} 
+                            onCancel={() => { setSelectedSheet(null); setView('inventory'); }}
+                        />;
+                    case 'movement':
+                        return <MovementSheet
+                            sheet={selectedSheet}
+                            onMove={handleMovement}
+                            onCancel={() => { setSelectedSheet(null); setView('inventory'); }}
+                        />;
+                    case 'chat':
+                        return <Chat 
+                            messages={chatMessages} 
+                            userId={userId} 
+                            onSend={handleSendMessage}
+                        />;
+                    case 'reports':
+                        return <ReportsView 
+                            movements={movements} 
+                            inventory={inventory}
+                        />;
+                    default:
+                        return <InventoryList 
+                            inventory={filteredInventory}
+                            searchTerm={searchTerm}
+                            setSearchTerm={setSearchTerm}
+                            onAdd={() => { setSelectedSheet(null); setView('add_edit'); }}
+                            onEdit={(sheet) => { setSelectedSheet(sheet); setView('add_edit'); }}
+                            onMovement={(sheet) => { setSelectedSheet(sheet); setView('movement'); }}
+                            exportCSV={exportCSV}
+                            isAdmin={isAdmin}
+                            db={db}
+                            setError={setError} // Adicionado para exibir mensagens de erro/feedback
+                        />;
+                }
             };
 
-            // Lógica de Relatórios Mensais
-            const generateMonthlyReport = useMemo(() => {
-                const now = new Date();
-                const currentYear = now.getFullYear();
-                const currentMonth = now.getMonth();
+            const username = userId ? `User-${userId.substring(0, 4)}` : 'Convidado';
 
-                const monthlyData = movements.reduce((acc, movement) => {
-                    if (!movement.timestamp) return acc;
+            return (
+                <div className="min-h-screen bg-gray-100 flex flex-col md:flex-row font-sans">
+                    <Sidebar currentView={view} setView={setView} isAdmin={isAdmin} username={username} />
+                    <main className="flex-1 p-4 md:p-8 overflow-y-auto">
+                        <Header username={username} userId={userId} isAdmin={isAdmin} />
+                        <div className="mt-4 bg-white p-4 md:p-6 rounded-xl shadow-lg min-h-[80vh]">
+                            {renderView()}
+                        </div>
+                    </main>
+                </div>
+            );
+        };
 
-                    const date = new Date(movement.timestamp.seconds * 1000);
-                    if (date.getFullYear() === currentYear && date.getMonth() === currentMonth) {
-                        const key = `${date.getFullYear()}-${date.getMonth()}`;
-                        if (!acc[key]) {
-                            acc[key] = { entradas: 0, saidas: 0 };
-                        }
+        // --- Componentes Modulares (Tailwind CSS Styling) ---
 
-                        if (movement.type === 'INPUT') {
-                            acc[key].entradas += movement.quantity;
-                        } else if (movement.type === 'OUTPUT') {
-                            acc[key].saidas += movement.quantity;
-                        }
-                    }
-                    return acc;
-                }, {});
+        const LoadingSpinner = () => (
+            <div className="flex justify-center items-center h-full min-h-[60vh] flex-col">
+                <svg className="animate-spin h-10 w-10 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                <p className="mt-4 text-gray-600">Carregando dados...</p>
+            </div>
+        );
 
-                const report = monthlyData[`${currentYear}-${currentMonth}`] || { entradas: 0, saidas: 0 };
-                return report;
-            }, [movements]);
+        const ErrorMessage = ({ message, onDismiss }) => (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                <div className="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full text-center">
+                    <h3 className="text-xl font-bold text-red-600 mb-3">Erro</h3>
+                    <p className="text-gray-700 mb-5">{message}</p>
+                    <button 
+                        onClick={onDismiss} 
+                        className="w-full bg-red-500 text-white py-2 rounded-lg hover:bg-red-600 transition duration-150 shadow-md"
+                    >
+                        Entendi
+                    </button>
+                </div>
+            </div>
+        );
 
-            // --- 5. COMPONENTES DE RENDERIZAÇÃO ---
+        const Header = ({ username, userId, isAdmin }) => (
+            <header className="flex flex-col md:flex-row justify-between items-start md:items-center pb-4 border-b border-gray-200">
+                <h1 className="text-3xl font-extrabold text-gray-800">
+                    Sistema de Estoque de Acrílico
+                </h1>
+                <div className="mt-2 md:mt-0 text-right">
+                    <p className="text-sm font-semibold text-gray-700">
+                        {isAdmin ? 'Administrador' : 'Padrão'}
+                        <span className={`ml-2 px-2 py-0.5 text-xs font-medium rounded-full ${isAdmin ? 'bg-green-100 text-green-800' : 'bg-blue-100 text-blue-800'}`}>
+                            {isAdmin ? 'Admin' : 'Usuário'}
+                        </span>
+                    </p>
+                    <p className="text-xs text-gray-500 truncate">ID: {userId}</p>
+                </div>
+            </header>
+        );
+
+        const Sidebar = ({ currentView, setView, isAdmin, username }) => {
+            const navItems = [
+                { id: 'inventory', label: 'Estoque', icon: '📦' },
+                { id: 'chat', label: 'Chat & Solicitações', icon: '💬' },
+                { id: 'reports', label: 'Relatórios Mensais', icon: '📈' },
+            ];
+
+            const NavButton = ({ id, label, icon }) => (
+                <button
+                    onClick={() => setView(id)}
+                    className={`w-full flex items-center px-4 py-3 rounded-xl transition duration-200 ${
+                        currentView === id
+                            ? 'bg-blue-600 text-white shadow-lg'
+                            : 'text-gray-700 hover:bg-gray-200 hover:text-blue-600'
+                    }`}
+                >
+                    <span className="text-xl mr-3">{icon}</span>
+                    <span className="font-medium text-sm md:text-base">{label}</span>
+                </button>
+            );
+
+            return (
+                <nav className="md:w-64 bg-white shadow-lg p-4 flex flex-col border-r border-gray-200 md:h-screen">
+                     <div className="hidden md:block text-2xl font-black text-blue-600 mb-6 border-b pb-4">
+                        ACRYLIC MGR
+                    </div>
+                    <div className="flex-1 flex flex-row md:flex-col space-x-2 md:space-x-0 md:space-y-2 overflow-x-auto pb-2 md:pb-0">
+                        {navItems.map(item => <NavButton key={item.id} {...item} />)}
+                    </div>
+                    <div className="mt-auto pt-4 border-t border-gray-200 hidden md:block">
+                        <p className="text-xs text-gray-500">Logado como: {username}</p>
+                    </div>
+                </nav>
+            );
+        };
+
+        // --- View: Inventory List ---
+
+        const InventoryList = ({ inventory, searchTerm, setSearchTerm, onAdd, onEdit, onMovement, exportCSV, isAdmin, setError }) => {
+            const [importing, setImporting] = useState(false);
             
-            // Modal de Configuração de Usuário
-            const RenderUserConfigModal = () => {
-                if (!isUsernameModalOpen) return null;
+            // Simulação de Importação CSV (Client-side)
+            const handleImportCSV = async (event) => {
+                // NOTE: A importação real para o Firestore exigiria parsing, validação e múltiplos
+                // comandos setDoc/addDoc, com a necessidade de batch writes para grandes volumes.
+                // Aqui, apenas demonstramos a funcionalidade de leitura.
+                setImporting(true);
+                const file = event.target.files[0];
+                if (!file) {
+                    setImporting(false);
+                    return;
+                }
 
-                return (
-                    <div className="fixed inset-0 bg-gray-600 bg-opacity-75 flex justify-center items-center z-50 p-4">
-                        <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
-                            <h3 className="text-xl font-bold mb-4 text-indigo-700">Configurar Nome de Usuário</h3>
-                            <p className="mb-4 text-sm text-gray-600">Este nome será exibido no chat e nos relatórios de movimentação de estoque.</p>
-                            <div className="mb-4">
-                                <label className="block text-sm font-medium text-gray-700 mb-1">Seu Nome / Apelido</label>
-                                <input
-                                    type="text"
-                                    placeholder="Ex: João Estoque"
-                                    value={tempUsername}
-                                    onChange={e => setTempUsername(e.target.value)}
-                                    className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    maxLength={30}
-                                />
-                            </div>
-                            <div className="mb-4 bg-gray-100 p-3 rounded-lg text-sm text-gray-600">
-                                <p className="font-semibold mb-1">ID Único (Inalterável):</p>
-                                <p className="font-mono break-all text-xs">{userId || 'Convidado'}</p>
-                            </div>
-                            <div className="flex justify-end space-x-3">
-                                <button
-                                    onClick={() => setIsUsernameModalOpen(false)}
-                                    className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={handleSaveUsername}
-                                    className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition"
-                                    disabled={!tempUsername.trim()}
-                                >
-                                    Salvar Nome
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                );
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const text = e.target.result;
+                    // console.log("CSV lido. Conteúdo:", text.substring(0, 200) + '...');
+                    setError('A leitura do CSV foi concluída. Para uma importação real, o sistema precisa de mais validação e processamento de dados para o Firestore.'); // Substituído alert() por setError()
+                    setImporting(false);
+                };
+                reader.onerror = () => {
+                    setError('Erro ao ler o arquivo CSV.'); // Substituído alert() por setError()
+                    setImporting(false);
+                };
+                reader.readAsText(file);
             };
 
-            const RenderInventory = () => (
-                <div className="p-4 md:p-6 bg-white rounded-xl shadow-lg h-full flex flex-col">
-                    <SectionTitle>Gerenciamento de Estoque de Chapas</SectionTitle>
-
-                    {/* Adicionar Nova Chapa / Adicionar a Existente */}
-                    <form onSubmit={handleAddOrUpdateSheet} className="grid grid-cols-2 md:grid-cols-6 gap-3 p-4 bg-indigo-50 rounded-lg mb-6 shadow-inner">
-                        <input type="text" placeholder="Tipo (Ex: Transparente)" value={newSheet.type} onChange={e => setNewSheet({...newSheet, type: e.target.value})} className="col-span-2 p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
-                        <input type="number" step="0.1" placeholder="Espessura (mm)" value={newSheet.thickness} onChange={e => setNewSheet({...newSheet, thickness: e.target.value})} className="p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
-                        <input type="text" placeholder="Tamanho (Ex: 1220x2440)" value={newSheet.size} onChange={e => setNewSheet({...newSheet, size: e.target.value})} className="col-span-1 md:col-span-2 p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
-                        <input type="text" placeholder="Localização" value={newSheet.location} onChange={e => setNewSheet({...newSheet, location: e.target.value})} className="col-span-1 p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
-                        <input type="number" placeholder="Qtd Inicial" value={newSheet.initialQuantity} onChange={e => setNewSheet({...newSheet, initialQuantity: e.target.value})} className="p-2 border rounded-lg focus:ring-indigo-500 focus:border-indigo-500" required />
-                        <button type="submit" className="col-span-2 md:col-span-6 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 rounded-lg transition duration-200 flex items-center justify-center">
-                            <PlusIcon className="w-5 h-5 mr-2" /> Adicionar/Entrada de Material
-                        </button>
-                    </form>
-
-                    {/* Pesquisa e Exportação */}
-                    <div className="flex flex-col sm:flex-row gap-3 mb-6">
-                        <div className="relative flex-grow">
-                            <input
-                                type="text"
-                                placeholder="Pesquisar por Tipo, Espessura, Tamanho ou Localização..."
-                                value={searchTerm}
-                                onChange={e => setSearchTerm(e.target.value)}
-                                className="w-full p-3 pl-10 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
-                            />
-                            <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+            return (
+                <section>
+                    <h2 className="text-2xl font-bold text-gray-700 mb-4">Estoque Atual de Chapas</h2>
+                    
+                    <div className="flex flex-col sm:flex-row justify-between items-center mb-6 space-y-3 sm:space-y-0 sm:space-x-4">
+                        <input
+                            type="text"
+                            placeholder="Pesquisar material, espessura, dimensões..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                            className="w-full sm:w-1/2 p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+                        />
+                        <div className="flex flex-wrap gap-3">
+                            <button 
+                                onClick={onAdd} 
+                                disabled={!isAdmin}
+                                className={`px-4 py-2 rounded-xl text-white font-semibold transition duration-150 ${
+                                    isAdmin ? 'bg-green-500 hover:bg-green-600 shadow-md' : 'bg-gray-400 cursor-not-allowed'
+                                }`}
+                            >
+                                + Nova Chapa
+                            </button>
+                            <button onClick={exportCSV} className="px-4 py-2 bg-yellow-500 text-white rounded-xl font-semibold hover:bg-yellow-600 transition duration-150 shadow-md">
+                                Exportar CSV
+                            </button>
+                            <label className={`px-4 py-2 rounded-xl font-semibold transition duration-150 cursor-pointer text-white shadow-md ${importing ? 'bg-gray-400' : 'bg-purple-500 hover:bg-purple-600'}`}>
+                                {importing ? 'Importando...' : 'Importar CSV'}
+                                <input type="file" accept=".csv" onChange={handleImportCSV} disabled={importing} className="hidden" />
+                            </label>
                         </div>
-                        <button
-                            onClick={handleExportCSV}
-                            className="flex-shrink-0 bg-emerald-500 hover:bg-emerald-600 text-white font-semibold py-3 px-4 rounded-xl transition duration-200 shadow-md flex items-center justify-center"
-                        >
-                            <DownloadIcon className="w-5 h-5 mr-2" /> Exportar CSV
-                        </button>
                     </div>
 
-                    {/* Tabela de Estoque */}
-                    <div className="overflow-x-auto rounded-xl shadow-lg flex-grow">
+                    <div className="overflow-x-auto shadow-xl rounded-xl">
                         <table className="min-w-full divide-y divide-gray-200">
-                            <thead className="bg-indigo-50 sticky top-0">
+                            <thead className="bg-blue-600 text-white">
                                 <tr>
-                                    {['Tipo', 'Espessura (mm)', 'Tamanho', 'Localização', 'Estoque', 'Ajuste'].map(header => (
-                                        <th key={header} className="px-6 py-3 text-left text-xs font-medium text-gray-600 uppercase tracking-wider">{header}</th>
-                                    ))}
+                                    <TableHead title="Material" />
+                                    <TableHead title="Espessura (mm)" />
+                                    <TableHead title="Dimensões (LxA)" />
+                                    <TableHead title="Estoque" />
+                                    <TableHead title="Mínimo" />
+                                    <TableHead title="Status" />
+                                    <TableHead title="Ações" isAction={true} />
                                 </tr>
                             </thead>
-                            <tbody className="bg-white divide-y divide-gray-200">
-                                {filteredSheets.length === 0 ? (
-                                    <tr><td colSpan="6" className="px-6 py-4 text-center text-gray-500">Nenhuma chapa encontrada.</td></tr>
+                            <tbody className="bg-white divide-y divide-gray-100">
+                                {/* CORRIGIDO: Usando 'inventory' (prop) em vez de 'filteredInventory' (variável pai) */}
+                                {inventory.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="7" className="px-6 py-4 text-center text-gray-500">Nenhuma chapa encontrada.</td>
+                                    </tr>
                                 ) : (
-                                    filteredSheets.map(sheet => (
-                                        <tr key={sheet.id} className="hover:bg-gray-50">
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{sheet.type}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{sheet.thickness}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{sheet.size}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{sheet.location}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm font-bold text-indigo-600">{sheet.quantity}</td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                                                <button
-                                                    onClick={() => setAdjustment({ id: sheet.id, type: sheet.type, quantity: 1, movementType: 'OUTPUT', notes: '' })}
-                                                    className="text-indigo-600 hover:text-indigo-900 font-semibold text-sm"
-                                                >
-                                                    Ajustar Qtd
-                                                </button>
+                                    inventory.map(sheet => (
+                                        <SheetRow 
+                                            key={sheet.id} 
+                                            sheet={sheet} 
+                                            onEdit={onEdit} 
+                                            onMovement={onMovement} 
+                                            isAdmin={isAdmin}
+                                        />
+                                    ))
+                                )}
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <p className="mt-4 text-sm text-gray-500">Total de {inventory.length} itens em estoque.</p>
+                </section>
+            );
+        };
+
+        const TableHead = ({ title, isAction = false }) => (
+            <th 
+                scope="col" 
+                className={`px-6 py-3 text-left text-xs font-medium uppercase tracking-wider ${isAction ? 'text-center' : ''}`}
+            >
+                {title}
+            </th>
+        );
+
+        const SheetRow = ({ sheet, onEdit, onMovement, isAdmin }) => {
+            const isLowStock = sheet.quantity < sheet.min_stock;
+
+            return (
+                <tr className="hover:bg-gray-50 transition duration-100">
+                    <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">{sheet.material}</td>
+                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">{sheet.thickness}</td>
+                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">{sheet.size_w} x {sheet.size_h} mm</td>
+                    <td className="px-6 py-3 whitespace-nowrap text-sm font-bold text-gray-700">{sheet.quantity}</td>
+                    <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">{sheet.min_stock || 0}</td>
+                    <td className="px-6 py-3 whitespace-nowrap">
+                        <span className={`px-3 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            sheet.quantity === 0 ? 'bg-red-100 text-red-800' : 
+                            isLowStock ? 'bg-yellow-100 text-yellow-800' : 
+                            'bg-green-100 text-green-800'
+                        }`}>
+                            {sheet.quantity === 0 ? 'Zerado' : (isLowStock ? 'Baixo' : 'OK')}
+                        </span>
+                    </td>
+                    <td className="px-6 py-3 whitespace-nowrap text-center text-sm font-medium space-x-2">
+                        <button 
+                            onClick={() => onMovement(sheet)} 
+                            className="text-blue-600 hover:text-blue-900 font-semibold"
+                        >
+                            Movimentar
+                        </button>
+                        <button 
+                            onClick={() => onEdit(sheet)} 
+                            disabled={!isAdmin}
+                            className={`font-semibold ${isAdmin ? 'text-indigo-600 hover:text-indigo-900' : 'text-gray-400 cursor-not-allowed'}`}
+                        >
+                            Editar
+                        </button>
+                    </td>
+                </tr>
+            );
+        };
+
+        // --- View: Add/Edit Sheet ---
+
+        const AddEditSheet = ({ sheet, onSave, onCancel }) => {
+            const [formData, setFormData] = useState({
+                id: sheet?.id || '',
+                material: sheet?.material || '',
+                thickness: sheet?.thickness || '',
+                size_w: sheet?.size_w || '',
+                size_h: sheet?.size_h || '',
+                quantity: sheet?.quantity || 0, // Apenas para inicialização
+                min_stock: sheet?.min_stock || 0,
+            });
+
+            const isEdit = !!sheet;
+
+            const handleChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({
+                    ...prev,
+                    [name]: value
+                }));
+            };
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSave(formData);
+            };
+
+            return (
+                <div className="max-w-xl mx-auto">
+                    <h2 className="text-2xl font-bold text-gray-700 mb-6 border-b pb-2">
+                        {isEdit ? 'Editar Dados da Chapa' : 'Adicionar Nova Chapa'}
+                    </h2>
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <InputField 
+                            label="Material (e.g., Cristal, Opaco, etc.)" 
+                            name="material" 
+                            value={formData.material} 
+                            onChange={handleChange} 
+                            required 
+                        />
+                        <InputField 
+                            label="Espessura (mm)" 
+                            name="thickness" 
+                            type="number" 
+                            value={formData.thickness} 
+                            onChange={handleChange} 
+                            required 
+                            step="0.1" 
+                        />
+                        <div className="flex space-x-4">
+                            <InputField 
+                                label="Largura (mm)" 
+                                name="size_w" 
+                                type="number" 
+                                value={formData.size_w} 
+                                onChange={handleChange} 
+                                required 
+                            />
+                            <InputField 
+                                label="Altura (mm)" 
+                                name="size_h" 
+                                type="number" 
+                                value={formData.size_h} 
+                                onChange={handleChange} 
+                                required 
+                            />
+                        </div>
+                        {!isEdit && (
+                            <InputField 
+                                label="Estoque Inicial" 
+                                name="quantity" 
+                                type="number" 
+                                value={formData.quantity} 
+                                onChange={handleChange} 
+                                required 
+                            />
+                        )}
+                         <InputField 
+                            label="Estoque Mínimo (Alerta)" 
+                            name="min_stock" 
+                            type="number" 
+                            value={formData.min_stock} 
+                            onChange={handleChange} 
+                            min="0"
+                        />
+
+                        <div className="pt-4 flex justify-end space-x-3">
+                            <button 
+                                type="button" 
+                                onClick={onCancel} 
+                                className="px-6 py-2 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-100 transition duration-150"
+                            >
+                                Cancelar
+                            </button>
+                            <button 
+                                type="submit" 
+                                className="px-6 py-2 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition duration-150 shadow-md"
+                            >
+                                {isEdit ? 'Salvar Alterações' : 'Adicionar Chapa'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        const MovementSheet = ({ sheet, onMove, onCancel }) => {
+            const [quantity, setQuantity] = useState(1);
+            const [type, setType] = useState('saida');
+
+            const handleConfirm = (e) => {
+                e.preventDefault();
+                onMove(sheet.id, type, parseInt(quantity, 10));
+            };
+
+            return (
+                <div className="max-w-md mx-auto">
+                    <h2 className="text-2xl font-bold text-gray-700 mb-6 border-b pb-2">
+                        Movimentação de Estoque
+                    </h2>
+                    <div className="bg-gray-50 p-4 rounded-xl mb-4">
+                        <p className="text-lg font-semibold">{sheet.material} ({sheet.thickness}mm)</p>
+                        <p className="text-sm text-gray-600">Em estoque: <span className="font-bold text-blue-600">{sheet.quantity}</span> chapas</p>
+                        <p className="text-xs text-gray-500">Dimensões: {sheet.size_w} x {sheet.size_h} mm</p>
+                    </div>
+
+                    <form onSubmit={handleConfirm} className="space-y-4">
+                        <div className="flex space-x-4">
+                            <div className="flex-1">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Tipo de Movimento</label>
+                                <select 
+                                    value={type} 
+                                    onChange={(e) => setType(e.target.value)}
+                                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+                                >
+                                    <option value="saida">Saída (Consumo)</option>
+                                    <option value="entrada">Entrada (Recebimento)</option>
+                                </select>
+                            </div>
+                            <InputField 
+                                label="Quantidade" 
+                                name="quantity" 
+                                type="number" 
+                                value={quantity} 
+                                onChange={(e) => setQuantity(e.target.value)} 
+                                min="1"
+                                required 
+                                className="flex-1"
+                            />
+                        </div>
+
+                        <div className="pt-4 flex justify-end space-x-3">
+                            <button 
+                                type="button" 
+                                onClick={onCancel} 
+                                className="px-6 py-2 border border-gray-300 rounded-xl text-gray-700 hover:bg-gray-100 transition duration-150"
+                            >
+                                Cancelar
+                            </button>
+                            <button 
+                                type="submit" 
+                                className={`px-6 py-2 rounded-xl font-semibold transition duration-150 shadow-md ${
+                                    type === 'entrada' ? 'bg-green-600 hover:bg-green-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'
+                                }`}
+                            >
+                                Confirmar {type === 'entrada' ? 'Entrada' : 'Saída'}
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            );
+        };
+
+        const InputField = ({ label, name, type = 'text', value, onChange, required = false, step, min }) => (
+            <div>
+                <label htmlFor={name} className="block text-sm font-medium text-gray-700 mb-1">
+                    {label} {required && <span className="text-red-500">*</span>}
+                </label>
+                <input
+                    type={type}
+                    id={name}
+                    name={name}
+                    value={value}
+                    onChange={onChange}
+                    required={required}
+                    step={step}
+                    min={min}
+                    className="w-full p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500 transition duration-150"
+                />
+            </div>
+        );
+
+        // --- View: Chat ---
+
+        const Chat = ({ messages, userId, onSend }) => {
+            const [newMessage, setNewMessage] = useState('');
+            const chatEndRef = useRef(null);
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSend(newMessage);
+                setNewMessage('');
+            };
+
+            // Scroll para a última mensagem
+            useEffect(() => {
+                chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+            }, [messages]);
+
+            return (
+                <section className="flex flex-col h-[75vh]">
+                    <h2 className="text-2xl font-bold text-gray-700 mb-4 border-b pb-2">
+                        Chat & Solicitações de Material
+                    </h2>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-gray-50 rounded-xl shadow-inner mb-4">
+                        {messages.length === 0 ? (
+                            <div className="text-center text-gray-500 py-10">
+                                Nenhuma mensagem ainda. Envie uma solicitação!
+                            </div>
+                        ) : (
+                            messages.map((msg) => {
+                                const isMine = msg.user_id === userId;
+                                return (
+                                    <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
+                                        <div className={`max-w-xs md:max-w-md p-3 rounded-xl shadow-md ${
+                                            isMine ? 'bg-blue-500 text-white rounded-br-none' : 'bg-white text-gray-800 rounded-tl-none border border-gray-200'
+                                        }`}>
+                                            {!isMine && (
+                                                <p className="font-semibold text-xs mb-1 opacity-80">
+                                                    {msg.username}
+                                                </p>
+                                            )}
+                                            <p className="text-sm break-words">{msg.message}</p>
+                                            <p className={`text-xs mt-1 ${isMine ? 'text-blue-200' : 'text-gray-400'} text-right`}>
+                                                {formatTimestamp(msg.timestamp)}
+                                            </p>
+                                        </div>
+                                    </div>
+                                );
+                            })
+                        )}
+                        <div ref={chatEndRef} />
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="flex space-x-3">
+                        <input
+                            type="text"
+                            value={newMessage}
+                            onChange={(e) => setNewMessage(e.target.value)}
+                            placeholder="Digite sua solicitação ou pergunta..."
+                            className="flex-1 p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500"
+                        />
+                        <button
+                            type="submit"
+                            disabled={!newMessage.trim()}
+                            className="px-6 py-3 bg-blue-600 text-white rounded-xl font-semibold hover:bg-blue-700 transition duration-150 disabled:bg-gray-400 shadow-md"
+                        >
+                            Enviar
+                        </button>
+                    </form>
+                </section>
+            );
+        };
+
+        // --- View: Reports ---
+
+        const ReportsView = ({ movements, inventory }) => {
+            const [selectedMonth, setSelectedMonth] = useState(new Date().toISOString().substring(0, 7));
+
+            const availableSheets = useMemo(() => {
+                return inventory.reduce((acc, sheet) => {
+                    acc[sheet.id] = `${sheet.material} (${sheet.thickness}mm - ${sheet.size_w}x${sheet.size_h})`;
+                    return acc;
+                }, {});
+            }, [inventory]);
+
+            const filteredMovements = useMemo(() => {
+                if (!selectedMonth) return [];
+                const [year, month] = selectedMonth.split('-');
+                
+                return movements.filter(mov => {
+                    if (!mov.timestamp || !mov.timestamp.seconds) return false;
+                    const date = new Date(mov.timestamp.seconds * 1000);
+                    return date.getFullYear() === parseInt(year) && (date.getMonth() + 1) === parseInt(month);
+                });
+            }, [movements, selectedMonth]);
+
+            const reportSummary = useMemo(() => {
+                let entradaTotal = 0;
+                let saidaTotal = 0;
+
+                filteredMovements.forEach(mov => {
+                    if (mov.type === 'entrada') {
+                        entradaTotal += mov.quantity;
+                    } else if (mov.type === 'saida') {
+                        saidaTotal += mov.quantity;
+                    }
+                });
+
+                return { entradaTotal, saidaTotal };
+            }, [filteredMovements]);
+
+            const monthsOptions = useMemo(() => {
+                const uniqueMonths = new Set();
+                movements.forEach(mov => {
+                    if (mov.timestamp && mov.timestamp.seconds) {
+                        const date = new Date(mov.timestamp.seconds * 1000);
+                        uniqueMonths.add(date.toISOString().substring(0, 7));
+                    }
+                });
+                const sortedMonths = Array.from(uniqueMonths).sort().reverse();
+                return sortedMonths;
+            }, [movements]);
+
+            return (
+                <section>
+                    <h2 className="text-2xl font-bold text-gray-700 mb-4 border-b pb-2">
+                        Relatórios Mensais de Movimentação
+                    </h2>
+                    
+                    <div className="mb-6 p-4 bg-blue-50 rounded-xl border border-blue-200 flex flex-col md:flex-row justify-between items-center">
+                        <div className="w-full md:w-auto mb-3 md:mb-0">
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Selecione o Mês</label>
+                            <select 
+                                value={selectedMonth} 
+                                onChange={(e) => setSelectedMonth(e.target.value)}
+                                className="w-full md:w-auto p-3 border border-gray-300 rounded-xl focus:ring-blue-500 focus:border-blue-500"
+                            >
+                                {monthsOptions.length > 0 ? (
+                                    monthsOptions.map(month => (
+                                        <option key={month} value={month}>{month}</option>
+                                    ))
+                                ) : (
+                                    <option value={new Date().toISOString().substring(0, 7)}>Mês Atual</option>
+                                )}
+                            </select>
+                        </div>
+                        
+                        <div className="flex w-full md:w-auto space-x-4 text-center">
+                            <div className="bg-green-100 p-3 rounded-lg flex-1">
+                                <p className="text-xs font-medium text-green-700">ENTRADA TOTAL</p>
+                                <p className="text-2xl font-bold text-green-600">{reportSummary.entradaTotal}</p>
+                            </div>
+                            <div className="bg-red-100 p-3 rounded-lg flex-1">
+                                <p className="text-xs font-medium text-red-700">SAÍDA TOTAL</p>
+                                <p className="text-2xl font-bold text-red-600">{reportSummary.saidaTotal}</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <h3 className="text-xl font-semibold text-gray-600 mb-3">Detalhes das Movimentações ({selectedMonth})</h3>
+                    <div className="overflow-x-auto shadow-xl rounded-xl">
+                        <table className="min-w-full divide-y divide-gray-200">
+                            <thead className="bg-gray-700 text-white">
+                                <tr>
+                                    <TableHead title="Data/Hora" />
+                                    <TableHead title="Tipo" />
+                                    <TableHead title="Quantidade" />
+                                    <TableHead title="Material" />
+                                    <TableHead title="Usuário" />
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-gray-100">
+                                {filteredMovements.length === 0 ? (
+                                    <tr>
+                                        <td colSpan="5" className="px-6 py-4 text-center text-gray-500">Nenhuma movimentação neste mês.</td>
+                                    </tr>
+                                ) : (
+                                    filteredMovements.map(mov => (
+                                        <tr key={mov.id} className="hover:bg-gray-50 transition duration-100">
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                                                {formatTimestamp(mov.timestamp)}
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap">
+                                                <span className={`px-3 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                                                    mov.type === 'entrada' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                                                }`}>
+                                                    {mov.type.toUpperCase()}
+                                                </span>
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm font-bold">
+                                                {mov.quantity}
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-900">
+                                                {availableSheets[mov.sheet_id] || 'Material Desconhecido'}
+                                            </td>
+                                            <td className="px-6 py-3 whitespace-nowrap text-sm text-gray-500">
+                                                {mov.username}
                                             </td>
                                         </tr>
                                     ))
@@ -555,227 +1037,14 @@
                             </tbody>
                         </table>
                     </div>
-
-                    {/* Modal de Ajuste de Estoque */}
-                    {adjustment.id && (
-                        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 flex justify-center items-center z-50 p-4">
-                            <div className="bg-white p-6 rounded-xl shadow-2xl w-full max-w-md">
-                                <h3 className="text-lg font-bold mb-4">Ajustar Estoque de: {adjustment.type}</h3>
-                                <div className="mb-4">
-                                    <label className="block text-sm font-medium text-gray-700">Tipo de Movimento</label>
-                                    <select
-                                        value={adjustment.movementType}
-                                        onChange={e => setAdjustment({...adjustment, movementType: e.target.value})}
-                                        className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm rounded-md"
-                                    >
-                                        <option value="OUTPUT">Saída (Retirada)</option>
-                                        <option value="INPUT">Entrada (Adição)</option>
-                                    </select>
-                                </div>
-                                <div className="mb-4">
-                                    <label className="block text-sm font-medium text-gray-700">Quantidade</label>
-                                    <input
-                                        type="number"
-                                        min="1"
-                                        value={adjustment.quantity}
-                                        onChange={e => setAdjustment({...adjustment, quantity: parseInt(e.target.value) || 0})}
-                                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    />
-                                </div>
-                                <div className="mb-6">
-                                    <label className="block text-sm font-medium text-gray-700">Observações (Opcional)</label>
-                                    <textarea
-                                        value={adjustment.notes}
-                                        onChange={e => setAdjustment({...adjustment, notes: e.target.value})}
-                                        rows="2"
-                                        placeholder="Motivo da saída/entrada, projeto, etc."
-                                        className="mt-1 block w-full border border-gray-300 rounded-md shadow-sm p-2 focus:ring-indigo-500 focus:border-indigo-500"
-                                    />
-                                </div>
-                                <div className="flex justify-end space-x-3">
-                                    <button
-                                        onClick={() => setAdjustment({ id: null, type: '', quantity: 0, movementType: 'OUTPUT', notes: '' })}
-                                        className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200"
-                                    >
-                                        Cancelar
-                                    </button>
-                                    <button
-                                        onClick={handleAdjustment}
-                                        className="px-4 py-2 text-sm font-medium text-white bg-indigo-600 rounded-md hover:bg-indigo-700 transition"
-                                    >
-                                        Confirmar Ajuste
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                </div>
+                </section>
             );
-
-            const RenderChat = () => (
-                <div className="p-4 md:p-6 bg-white rounded-xl shadow-lg h-full flex flex-col">
-                    <SectionTitle>Chat de Solicitação e Comunicação</SectionTitle>
-                    <div ref={chatRef} className="flex-grow overflow-y-auto space-y-4 p-3 mb-4 border border-gray-200 rounded-lg bg-gray-50 h-[300px] max-h-[calc(100vh-350px)]">
-                        {chatMessages.length === 0 ? (
-                            <p className="text-center text-gray-500 italic">Inicie a conversa! Use este chat para solicitar material ou tirar dúvidas.</p>
-                        ) : (
-                            chatMessages.map((msg) => {
-                                const isMine = msg.userId === userId;
-                                const time = msg.timestamp ? new Date(msg.timestamp.seconds * 1000).toLocaleTimeString('pt-BR').substring(0, 5) : '...';
-                                return (
-                                    <div key={msg.id} className={`flex ${isMine ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-xs md:max-w-md px-4 py-2 rounded-xl shadow ${isMine ? 'bg-indigo-500 text-white rounded-br-none' : 'bg-gray-200 text-gray-800 rounded-tl-none'}`}>
-                                            {!isMine && <div className="text-xs font-semibold mb-1 opacity-80">{msg.username}</div>}
-                                            <p className="text-sm">{msg.message}</p>
-                                            <span className={`block text-right text-xs mt-1 ${isMine ? 'opacity-70' : 'text-gray-500'}`}>{time}</span>
-                                        </div>
-                                    </div>
-                                );
-                            })
-                        )}
-                    </div>
-                    <form onSubmit={handleSendChat} className="flex gap-2">
-                        <input
-                            type="text"
-                            placeholder="Digite sua mensagem ou solicitação..."
-                            value={chatInput}
-                            onChange={e => setChatInput(e.target.value)}
-                            className="flex-grow p-3 border border-gray-300 rounded-xl focus:ring-indigo-500 focus:border-indigo-500 shadow-sm"
-                            required
-                        />
-                        <button
-                            type="submit"
-                            className="flex-shrink-0 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-4 rounded-xl transition duration-200 flex items-center justify-center"
-                            disabled={!chatInput.trim()}
-                        >
-                            <SendIcon className="w-5 h-5" />
-                        </button>
-                    </form>
-                </div>
-            );
-
-            const RenderReports = () => (
-                <div className="p-4 md:p-6 bg-white rounded-xl shadow-lg h-full flex flex-col">
-                    <SectionTitle>Relatórios Mensais de Movimentação</SectionTitle>
-
-                    <div className="mb-6">
-                        <h3 className="text-xl font-semibold text-indigo-700 mb-2">Resumo Mensal (Mês Atual)</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                            <div className="bg-green-50 p-4 rounded-xl shadow-md border-l-4 border-green-500">
-                                <p className="text-sm font-medium text-gray-500">Total de Entradas</p>
-                                <p className="text-2xl font-bold text-green-600">{generateMonthlyReport.entradas} chapas</p>
-                            </div>
-                            <div className="bg-red-50 p-4 rounded-xl shadow-md border-l-4 border-red-500">
-                                <p className="text-sm font-medium text-gray-500">Total de Saídas</p>
-                                <p className="text-2xl font-bold text-red-600">{generateMonthlyReport.saidas} chapas</p>
-                            </div>
-                            <div className="bg-blue-50 p-4 rounded-xl shadow-md border-l-4 border-blue-500">
-                                <p className="text-sm font-medium text-gray-500">Estoque Total</p>
-                                <p className="text-2xl font-bold text-blue-600">{sheets.reduce((sum, s) => sum + s.quantity, 0)} chapas</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <h3 className="text-lg font-semibold text-gray-800 mb-3">Histórico Detalhado de Movimentos</h3>
-                    <div className="overflow-y-auto max-h-[calc(100vh-350px)] flex-grow">
-                        <div className="space-y-3">
-                            {movements.length === 0 ? (
-                                <p className="text-center text-gray-500 italic py-4">Nenhum movimento registrado este mês.</p>
-                            ) : (
-                                movements.map(m => {
-                                    const date = m.timestamp ? new Date(m.timestamp.seconds * 1000).toLocaleString('pt-BR') : 'N/A';
-                                    const isInput = m.type === 'INPUT';
-                                    return (
-                                        <div key={m.id} className={`p-3 rounded-lg shadow-sm border ${isInput ? 'bg-green-50 border-green-200' : 'bg-red-50 border-red-200'} flex justify-between items-center`}>
-                                            <div>
-                                                <p className="font-semibold text-sm">
-                                                    {isInput ? 'ENTRADA' : 'SAÍDA'} de <span className="text-base">{m.quantity}</span> chapas
-                                                </p>
-                                                <p className="text-xs text-gray-600">
-                                                    {m.sheetInfo.type}, {m.sheetInfo.thickness}mm, {m.sheetInfo.size}
-                                                </p>
-                                                {m.notes && <p className="text-xs italic text-gray-500 mt-1">Obs: {m.notes}</p>}
-                                            </div>
-                                            <div className="text-right">
-                                                <p className="text-xs text-gray-700">{date}</p>
-                                                <p className="text-xs text-gray-500">Por: {m.userName}</p>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            )}
-                        </div>
-                    </div>
-
-                </div>
-            );
-
-            // --- 6. RENDERIZAÇÃO PRINCIPAL ---
-
-            const App = () => (
-                <div className="min-h-screen font-sans p-2 sm:p-4 md:p-6">
-                    <div className="max-w-6xl mx-auto">
-                        {/* Cabeçalho */}
-                        <header className="bg-indigo-700 text-white p-4 rounded-xl shadow-xl mb-4 flex flex-col sm:flex-row justify-between items-start sm:items-center">
-                            <h1 className="text-2xl font-extrabold mb-2 sm:mb-0">Gestão de Estoque Acrílico</h1>
-                            <div className="flex items-center space-x-3">
-                                <button
-                                    onClick={() => {
-                                        setTempUsername(userProfile?.name || '');
-                                        setIsUsernameModalOpen(true);
-                                    }}
-                                    className="bg-indigo-600 hover:bg-indigo-500 p-2 rounded-full transition duration-200"
-                                    aria-label="Configurar nome de usuário"
-                                >
-                                    <SettingsIcon className="w-5 h-5" />
-                                </button>
-                                <div className="text-right bg-indigo-800 px-3 py-1 rounded-full text-sm font-medium flex flex-col items-start">
-                                    <span className="text-xs text-indigo-300">Usuário Logado:</span>
-                                    <span className="font-bold">{userName}</span>
-                                </div>
-                            </div>
-                        </header>
-
-                        {error && <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-4" role="alert">{error}</div>}
-
-                        {/* Navegação por Abas (Responsiva) */}
-                        <div className="flex justify-around bg-white p-2 rounded-xl shadow-md mb-4 sticky top-0 z-10">
-                            <button
-                                onClick={() => setActiveTab('inventory')}
-                                className={`py-2 px-4 rounded-lg font-semibold transition duration-200 w-1/3 ${activeTab === 'inventory' ? 'bg-indigo-500 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
-                            >
-                                Estoque
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('chat')}
-                                className={`py-2 px-4 rounded-lg font-semibold transition duration-200 w-1/3 ${activeTab === 'chat' ? 'bg-indigo-500 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
-                            >
-                                Chat
-                            </button>
-                            <button
-                                onClick={() => setActiveTab('reports')}
-                                className={`py-2 px-4 rounded-lg font-semibold transition duration-200 w-1/3 ${activeTab === 'reports' ? 'bg-indigo-500 text-white shadow-lg' : 'text-gray-600 hover:bg-gray-100'}`}
-                            >
-                                Relatórios
-                            </button>
-                        </div>
-
-                        {/* Conteúdo da Aba */}
-                        <main className="tab-content">
-                            {activeTab === 'inventory' && RenderInventory()}
-                            {activeTab === 'chat' && RenderChat()}
-                            {activeTab === 'reports' && RenderReports()}
-                        </main>
-                    </div>
-                    {RenderUserConfigModal()}
-                </div>
-            );
-
-            // Montagem do App
-            const root = ReactDOM.createRoot(document.getElementById('root'));
-            root.render(<App />);
-
         };
+
+        // Renderiza o componente principal
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
     </script>
 </body>
 </html>
