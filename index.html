@@ -80,8 +80,8 @@
         // ==============================================
         // CONFIGURAÇÃO FIREBASE E VARIÁVEIS DO AMBIENTE
         // ==============================================
-        // Configuração de exemplo - DEVE SER SUBSTITUÍDA PELO AMBIENTE
-        const userFirebaseConfig = {
+        // Configuração Padrão (Fornecida pelo Usuário) - Usada como fallback se o ambiente não fornecer __firebase_config
+        const defaultFirebaseConfig = {
             apiKey: "AIzaSyD95f45KhKjK61N8E7wDD4Lpvvbdh3jL10",
             authDomain: "estoqueortoguaru-b072c.firebaseapp.com",
             projectId: "estoqueortoguaru-b072c",
@@ -92,8 +92,8 @@
         
         // Variáveis globais do ambiente (Canvas)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'acrylic-inventory-manager';
-        // Prioriza a configuração global se existir
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : userFirebaseConfig;
+        // Prioriza a configuração global se existir, caso contrário, usa a configuração padrão
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : defaultFirebaseConfig;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // Helper para converter data para formato PT-BR
