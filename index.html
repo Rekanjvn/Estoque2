@@ -246,15 +246,26 @@
                                 setIsAdmin(uid.includes('admin') || uid.length % 2 === 0);
                                 
                                 const userDocRef = doc(firestore, `artifacts/${appId}/users`, uid);
-                                const userDoc = await getDoc(userDocRef);
+                                
+                                try {
+                                    // Adicionamos um try...catch para garantir que o getDoc não bloqueie o app
+                                    const userDoc = await getDoc(userDocRef);
 
-                                if (userDoc.exists() && userDoc.data().displayName) {
-                                    setDisplayName(userDoc.data().displayName);
-                                    setIsNameSetupRequired(false);
-                                } else {
-                                    setDisplayName(`User-${uid.substring(0, 4)}`); 
-                                    setIsNameSetupRequired(true); // Força a configuração do nome
+                                    if (userDoc.exists() && userDoc.data().displayName) {
+                                        setDisplayName(userDoc.data().displayName);
+                                        setIsNameSetupRequired(false);
+                                    } else {
+                                        setDisplayName(`User-${uid.substring(0, 4)}`); 
+                                        setIsNameSetupRequired(true); // Força a configuração do nome
+                                    }
+                                } catch (docError) {
+                                    console.error("ERRO: Não foi possível obter ou verificar o documento do usuário:", docError);
+                                    // Se falhar a leitura, assume nome de usuário padrão e força o setup
+                                    setDisplayName(`User-${uid.substring(0, 4)}`);
+                                    setIsNameSetupRequired(true); 
+                                    setError("Erro de conexão ao carregar perfil. Por favor, configure seu nome.");
                                 }
+
                             } else {
                                 setUserId(null);
                                 setDisplayName(null);
@@ -262,7 +273,7 @@
                                 setIsNameSetupRequired(false);
                             }
                             setIsAuthReady(true);
-                            setLoading(false);
+                            setLoading(false); // Agora garantido de ser executado
                         });
 
                         // Tentativa de login com token personalizado ou anônimo
