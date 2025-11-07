@@ -777,17 +777,10 @@
 
                     <div className="overflow-x-auto shadow-xl rounded-xl border border-gray-700">
                         <table className="min-w-full divide-y divide-gray-700">
-                            <thead className="bg-ortoguaru-primary text-white sticky top-0 z-10">
-                                <tr>
-                                    <TableHead title="Material" />
-                                    <TableHead title="Espessura (mm)" />
-                                    <TableHead title="Dimensões (LxA)" />
-                                    <TableHead title="Estoque" />
-                                    <TableHead title="Mínimo" />
-                                    <TableHead title="Status" />
-                                    <TableHead title="Ações" isAction={true} />
-                                </tr>
-                            </thead>
+                            {/* Estrutura corrigida para evitar erros de aninhamento DOM (whitespace text nodes) */}
+                            <thead className="bg-ortoguaru-primary text-white sticky top-0 z-10"><tr>
+                                <TableHead title="Material" /><TableHead title="Espessura (mm)" /><TableHead title="Dimensões (LxA)" /><TableHead title="Estoque" /><TableHead title="Mínimo" /><TableHead title="Status" /><TableHead title="Ações" isAction={true} />
+                            </tr></thead>
                             <tbody className="bg-gray-700 divide-y divide-gray-600">
                                 {inventory.length === 0 ? (
                                     <tr>
@@ -1230,15 +1223,10 @@
                     <h3 className="text-xl font-semibold text-gray-300 mb-3">Detalhes das Movimentações ({selectedMonth})</h3>
                     <div className="overflow-x-auto shadow-xl rounded-xl border border-gray-700">
                         <table className="min-w-full divide-y divide-gray-700">
-                            <thead className="bg-gray-700 text-white sticky top-0 z-10">
-                                <tr>
-                                    <TableHead title="Data/Hora" />
-                                    <TableHead title="Tipo" />
-                                    <TableHead title="Quantidade" />
-                                    <TableHead title="Material" />
-                                    <TableHead title="Usuário" />
-                                </tr>
-                            </thead>
+                            {/* Estrutura corrigida para evitar erros de aninhamento DOM (whitespace text nodes) */}
+                            <thead className="bg-gray-700 text-white sticky top-0 z-10"><tr>
+                                <TableHead title="Data/Hora" /><TableHead title="Tipo" /><TableHead title="Quantidade" /><TableHead title="Material" /><TableHead title="Usuário" />
+                            </tr></thead>
                             <tbody className="bg-gray-800 divide-y divide-gray-700">
                                 {filteredMovements.length === 0 ? (
                                     <tr>
