@@ -44,9 +44,22 @@
 
         const { useState, useEffect, useCallback, useMemo, useRef } = React;
 
+        // ==============================================
+        // CONFIGURAÇÃO REAL DO FIREBASE (INSERIDA PELO USUÁRIO)
+        // ==============================================
+        const userFirebaseConfig = {
+            apiKey: "AIzaSyD95f45KhKjK61N8E7wDD4Lpvvbdh3jL10",
+            authDomain: "estoqueortoguaru-b072c.firebaseapp.com",
+            projectId: "estoqueortoguaru-b072c",
+            storageBucket: "estoqueortoguaru-b072c.firebasestorage.app",
+            messagingSenderId: "495124996403",
+            appId: "1:495124996403:web:5842d7416a3f687c9c5e46"
+        };
+        
         // Variáveis globais do ambiente (Canvas)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'acrylic-inventory-manager';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        // Prioriza a configuração inserida pelo usuário se as variáveis globais não existirem
+        const firebaseConfig = userFirebaseConfig || (typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {});
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         // Helper para converter data para formato PT-BR
@@ -75,6 +88,7 @@
             // 1. Inicialização do Firebase e Autenticação
             useEffect(() => {
                 try {
+                    // Inicializa o app com a configuração fornecida
                     const app = initializeApp(firebaseConfig);
                     const firestore = getFirestore(app);
                     const authService = getAuth(app);
